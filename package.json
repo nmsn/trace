@@ -3,10 +3,6 @@
   "version": "1.0.0",
   "private": true,
   "description": "TypeScript function library with Next.js test app",
-  "workspaces": [
-    "packages/*",
-    "apps/*"
-  ],
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
@@ -19,5 +15,5 @@
     "typescript": "^5.1.6",
     "@types/node": "^20.4.5"
   },
-  "packageManager": "npm@9.8.1"
+  "packageManager": "pnpm@8.6.0"
 }

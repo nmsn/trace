@@ -1,146 +1,290 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
-  capitalize,
-  toCamelCase,
-  randomString,
-  unique,
-  chunk,
-  deepClone,
-  formatDate,
-  getRelativeTime
+  lru
 } from '@trace/utils'
-import { Validator, EventEmitter, Storage } from '@trace/core'
+import {
+  isOnline,
+  createNetworkMonitor,
+  getNetworkInfo,
+  NetworkInfo,
+  NetworkType,
+  NetworkSpeed,
+  getNetworkTypeDescription,
+  getSpeedDescription,
+  measureDownloadSpeed,
+  measureNetworkLatency
+} from '@trace/core'
 
 export default function Home() {
   const [results, setResults] = useState<string[]>([])
+  const [networkInfo, setNetworkInfo] = useState<NetworkInfo>(getNetworkInfo())
+  const [isLoading, setIsLoading] = useState<boolean>(false)
+  const [speedTestResult, setSpeedTestResult] = useState<{
+    downloadSpeed: number | null;
+    latency: number | null;
+  }>({
+    downloadSpeed: null,
+    latency: null
+  })
 
   const addResult = (result: string) => {
-    setResults(prev => [...prev, result])
+    setResults(prev => [result, ...prev].slice(0, 50)) // 限制日志数量
   }
 
-  const testStringUtils = () => {
-    addResult('=== 字符串工具测试 ===')
-    addResult(`capitalize('hello'): ${capitalize('hello')}`)
-    addResult(`toCamelCase('hello-world'): ${toCamelCase('hello-world')}`)
-    addResult(`randomString(10): ${randomString(10)}`)
-  }
+  useEffect(() => {
+    // 初始化网络状态
+    setNetworkInfo(getNetworkInfo())
 
-  const testArrayUtils = () => {
-    addResult('=== 数组工具测试 ===')
-    const arr = [1, 2, 2, 3, 3, 4]
-    addResult(`unique([1,2,2,3,3,4]): ${JSON.stringify(unique(arr))}`)
+    // 创建网络监视器 (每5秒轮询一次)
+    const networkMonitor = createNetworkMonitor(5000)
 
-    const chunked = chunk([1, 2, 3, 4, 5, 6], 2)
-    addResult(`chunk([1,2,3,4,5,6], 2): ${JSON.stringify(chunked)}`)
-  }
-
-  const testObjectUtils = () => {
-    addResult('=== 对象工具测试 ===')
-    const obj = { a: 1, b: { c: 2 } }
-    const cloned = deepClone(obj)
-    cloned.b.c = 999
-    addResult(`原对象: ${JSON.stringify(obj)}`)
-    addResult(`深拷贝后修改: ${JSON.stringify(cloned)}`)
-  }
-
-  const testDateUtils = () => {
-    addResult('=== 日期工具测试 ===')
-    const now = new Date()
-    addResult(`formatDate(now): ${formatDate(now, 'YYYY-MM-DD HH:mm:ss')}`)
-
-    const pastDate = new Date(Date.now() - 2 * 60 * 60 * 1000) // 2小时前
-    addResult(`getRelativeTime(2小时前): ${getRelativeTime(pastDate)}`)
-  }
-
-  const testValidator = () => {
-    addResult('=== 验证器测试 ===')
-    const validator = new Validator()
-      .addRule('name', { required: true, minLength: 2 })
-      .addRule('email', { required: true, pattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/ })
-
-    const result1 = validator.validate({ name: 'A', email: 'invalid' })
-    addResult(`验证失败: ${JSON.stringify(result1)}`)
-
-    const result2 = validator.validate({ name: 'Alice', email: 'alice@example.com' })
-    addResult(`验证成功: ${JSON.stringify(result2)}`)
-  }
-
-  const testEventEmitter = () => {
-    addResult('=== 事件发射器测试 ===')
-    const emitter = new EventEmitter()
-
-    emitter.on('test', (data) => {
-      addResult(`收到事件: ${data}`)
+    // 添加网络状态变化监听器
+    const removeListener = networkMonitor.addListener((info) => {
+      setNetworkInfo(info)
+      addResult(`网络状态变化: ${info.online ? '已连接' : '已断开'} - 类型: ${getNetworkTypeDescription(info.type)} - ${new Date().toLocaleTimeString()}`)
     })
 
-    emitter.emit('test', 'Hello World!')
-    addResult(`监听器数量: ${emitter.listenerCount('test')}`)
+    // 组件卸载时清理监听器
+    return () => {
+      removeListener()
+      networkMonitor.destroy()
+    }
+  }, [])
+
+  // 测试网络状态检测功能
+  const testNetworkStatus = () => {
+    const info = getNetworkInfo()
+    setNetworkInfo(info)
+    addResult(`当前网络状态: ${info.online ? '已连接' : '已断开'}, 类型: ${getNetworkTypeDescription(info.type)}, 速度等级: ${getSpeedDescription(info.downlink || 0)}`)
   }
 
-  const testStorage = () => {
-    addResult('=== 存储工具测试 ===')
-    const storage = new Storage({ prefix: 'trace' })
+  // 测量网络速度
+  const testNetworkSpeed = async () => {
+    setIsLoading(true)
+    addResult('开始测量网络速度...')
 
-    storage.set('user', { name: 'Alice', age: 25 })
-    const user = storage.get('user')
-    addResult(`存储的用户: ${JSON.stringify(user)}`)
+    try {
+      // 测量下载速度
+      const downloadSpeed = await measureDownloadSpeed(500000) // 使用500KB的样本以加快测试
+      setSpeedTestResult(prev => ({ ...prev, downloadSpeed }))
+      addResult(`下载速度: ${downloadSpeed.toFixed(2)} Mbps (${getSpeedDescription(downloadSpeed)})`)
 
-    addResult(`所有键: ${JSON.stringify(storage.keys())}`)
+      // 测量网络延迟
+      const latency = await measureNetworkLatency()
+      setSpeedTestResult(prev => ({ ...prev, latency }))
+      addResult(`网络延迟: ${latency.toFixed(0)} ms`)
+    } catch (error) {
+      addResult(`测速失败: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setIsLoading(false)
+    }
   }
 
-  const clearResults = () => {
-    setResults([])
+  // 获取网络类型的颜色
+  const getNetworkTypeColor = (type: NetworkType) => {
+    switch (type) {
+      case NetworkType.ETHERNET:
+        return '#4CAF50'; // 绿色
+      case NetworkType.WIFI:
+        return '#2196F3'; // 蓝色
+      case NetworkType.CELLULAR_5G:
+        return '#9C27B0'; // 紫色
+      case NetworkType.CELLULAR_4G:
+        return '#00BCD4'; // 青色
+      case NetworkType.CELLULAR_3G:
+        return '#FF9800'; // 橙色
+      case NetworkType.CELLULAR_2G:
+        return '#F44336'; // 红色
+      case NetworkType.CELLULAR:
+        return '#607D8B'; // 蓝灰色
+      case NetworkType.OFFLINE:
+        return '#9E9E9E'; // 灰色
+      default:
+        return '#9E9E9E'; // 灰色
+    }
+  }
+
+  // 获取网络速度的颜色
+  const getSpeedColor = (speed: NetworkSpeed) => {
+    switch (speed) {
+      case NetworkSpeed.EXCELLENT:
+        return '#4CAF50'; // 绿色
+      case NetworkSpeed.GOOD:
+        return '#8BC34A'; // 浅绿色
+      case NetworkSpeed.MODERATE:
+        return '#FFC107'; // 琥珀色
+      case NetworkSpeed.SLOW:
+        return '#FF5722'; // 深橙色
+      default:
+        return '#9E9E9E'; // 灰色
+    }
   }
 
   return (
-    <div style={{ padding: '20px', fontFamily: 'monospace' }}>
-      <h1>Trace 函数库测试</h1>
+    <div style={{ padding: '20px', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+      <h1>网络状态检测</h1>
 
       <div style={{ marginBottom: '20px' }}>
-        <button onClick={testStringUtils} style={{ margin: '5px' }}>
-          测试字符串工具
-        </button>
-        <button onClick={testArrayUtils} style={{ margin: '5px' }}>
-          测试数组工具
-        </button>
-        <button onClick={testObjectUtils} style={{ margin: '5px' }}>
-          测试对象工具
-        </button>
-        <button onClick={testDateUtils} style={{ margin: '5px' }}>
-          测试日期工具
-        </button>
-        <button onClick={testValidator} style={{ margin: '5px' }}>
-          测试验证器
-        </button>
-        <button onClick={testEventEmitter} style={{ margin: '5px' }}>
-          测试事件发射器
-        </button>
-        <button onClick={testStorage} style={{ margin: '5px' }}>
-          测试存储工具
-        </button>
-        <button onClick={clearResults} style={{ margin: '5px', backgroundColor: '#ff6b6b', color: 'white' }}>
-          清空结果
-        </button>
-      </div>
-
-      <div style={{
-        backgroundColor: '#f5f5f5',
-        padding: '15px',
-        borderRadius: '5px',
-        maxHeight: '400px',
-        overflowY: 'auto'
-      }}>
-        <h3>测试结果:</h3>
-        {results.map((result, index) => (
-          <div key={index} style={{ marginBottom: '5px' }}>
-            {result}
+        {/* 网络状态卡片 */}
+        <div style={{
+          padding: '20px',
+          backgroundColor: networkInfo.online ? '#f8f9fa' : '#ffe6e6',
+          border: `1px solid ${networkInfo.online ? '#dee2e6' : '#f5c2c7'}`,
+          borderRadius: '8px',
+          marginBottom: '20px',
+          boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+            <h2 style={{ margin: '0', color: '#212529' }}>
+              网络状态: {networkInfo.online ? '已连接 ✅' : '已断开 ❌'}
+            </h2>
+            <span style={{
+              backgroundColor: getNetworkTypeColor(networkInfo.type),
+              color: 'white',
+              padding: '5px 10px',
+              borderRadius: '20px',
+              fontSize: '14px',
+              fontWeight: 'bold'
+            }}>
+              {getNetworkTypeDescription(networkInfo.type)}
+            </span>
           </div>
-        ))}
-        {results.length === 0 && (
-          <div style={{ color: '#666' }}>点击上方按钮开始测试...</div>
-        )}
+
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+            gap: '15px',
+            marginBottom: '20px'
+          }}>
+            <div style={{ backgroundColor: '#ffffff', padding: '15px', borderRadius: '6px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+              <div style={{ fontSize: '14px', color: '#6c757d', marginBottom: '5px' }}>下行速度</div>
+              <div style={{ fontSize: '18px', fontWeight: 'bold' }}>
+                {networkInfo.downlink ? `${networkInfo.downlink.toFixed(1)} Mbps` : '未知'}
+              </div>
+            </div>
+
+            <div style={{ backgroundColor: '#ffffff', padding: '15px', borderRadius: '6px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+              <div style={{ fontSize: '14px', color: '#6c757d', marginBottom: '5px' }}>网络延迟</div>
+              <div style={{ fontSize: '18px', fontWeight: 'bold' }}>
+                {networkInfo.rtt ? `${networkInfo.rtt.toFixed(0)} ms` : '未知'}
+              </div>
+            </div>
+
+            <div style={{ backgroundColor: '#ffffff', padding: '15px', borderRadius: '6px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+              <div style={{ fontSize: '14px', color: '#6c757d', marginBottom: '5px' }}>速度等级</div>
+              <div style={{
+                fontSize: '18px',
+                fontWeight: 'bold',
+                color: getSpeedColor(networkInfo.speed)
+              }}>
+                {networkInfo.speed !== NetworkSpeed.UNKNOWN ? networkInfo.speed : '未知'}
+              </div>
+            </div>
+
+            <div style={{ backgroundColor: '#ffffff', padding: '15px', borderRadius: '6px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+              <div style={{ fontSize: '14px', color: '#6c757d', marginBottom: '5px' }}>数据节省</div>
+              <div style={{ fontSize: '18px', fontWeight: 'bold' }}>
+                {typeof networkInfo.saveData === 'boolean' ? (networkInfo.saveData ? '开启' : '关闭') : '未知'}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+            <button
+              onClick={testNetworkStatus}
+              style={{
+                padding: '10px 16px',
+                backgroundColor: '#0d6efd',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontWeight: 'bold',
+                fontSize: '14px'
+              }}
+            >
+              检测网络状态
+            </button>
+
+            <button
+              onClick={testNetworkSpeed}
+              disabled={isLoading || !networkInfo.online}
+              style={{
+                padding: '10px 16px',
+                backgroundColor: isLoading ? '#6c757d' : '#198754',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: isLoading || !networkInfo.online ? 'not-allowed' : 'pointer',
+                fontWeight: 'bold',
+                fontSize: '14px',
+                opacity: isLoading || !networkInfo.online ? 0.7 : 1
+              }}
+            >
+              {isLoading ? '测速中...' : '测量网络速度'}
+            </button>
+          </div>
+
+          {speedTestResult.downloadSpeed !== null && speedTestResult.latency !== null && (
+            <div style={{
+              marginTop: '20px',
+              padding: '15px',
+              backgroundColor: '#e9ecef',
+              borderRadius: '6px',
+              border: '1px solid #dee2e6'
+            }}>
+              <h3 style={{ margin: '0 0 10px 0', fontSize: '16px' }}>测速结果</h3>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '20px' }}>
+                <div>
+                  <div style={{ fontSize: '14px', color: '#6c757d' }}>下载速度:</div>
+                  <div style={{ fontSize: '18px', fontWeight: 'bold' }}>
+                    {speedTestResult.downloadSpeed.toFixed(2)} Mbps
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#6c757d' }}>
+                    {getSpeedDescription(speedTestResult.downloadSpeed)}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '14px', color: '#6c757d' }}>网络延迟:</div>
+                  <div style={{ fontSize: '18px', fontWeight: 'bold' }}>
+                    {speedTestResult.latency.toFixed(0)} ms
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#6c757d' }}>
+                    {speedTestResult.latency < 50 ? '极佳' : speedTestResult.latency < 100 ? '良好' : speedTestResult.latency < 200 ? '一般' : '较差'}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <p style={{ fontSize: '12px', marginTop: '15px', color: '#6c757d' }}>
+            提示: 你可以通过浏览器的开发者工具模拟不同的网络条件来测试此功能
+          </p>
+        </div>
+
+        {/* 事件日志 */}
+        <div style={{
+          maxHeight: '300px',
+          overflowY: 'auto',
+          border: '1px solid #dee2e6',
+          padding: '15px',
+          borderRadius: '8px',
+          backgroundColor: '#f8f9fa',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
+        }}>
+          <h3 style={{ margin: '0 0 15px 0', color: '#212529' }}>事件日志:</h3>
+          {results.length === 0 ? (
+            <p style={{ color: '#6c757d' }}>暂无事件</p>
+          ) : (
+            <ul style={{ paddingLeft: '20px', margin: 0 }}>
+              {results.map((result, index) => (
+                <li key={index} style={{ marginBottom: '8px', color: '#495057' }}>{result}</li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
     </div>
   )

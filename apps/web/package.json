@@ -9,8 +9,8 @@
     "start": "next start"
   },
   "dependencies": {
-    "@trace/core": "*",
-    "@trace/utils": "*",
+    "@trace/core": "workspace:*",
+    "@trace/utils": "workspace:*",
     "next": "13.4.12",
     "react": "18.2.0",
     "react-dom": "18.2.0"

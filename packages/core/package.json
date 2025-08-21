@@ -14,7 +14,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@trace/utils": "*"
+    "@trace/utils": "workspace:*"
   },
   "devDependencies": {
     "tsup": "^7.1.0",
